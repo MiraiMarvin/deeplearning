@@ -1,0 +1,40 @@
+# Environnements virtuels
+venv/
+.env/
+.venv/
+env/
+ENV/
+*.env
+
+# Fichiers Python compilés
+__pycache__/
+*.py[cod]
+*.so
+
+# Fichiers Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Données MNIST téléchargées
+data/
+*.npz
+
+# Modèles lourds
+*.pth
+*.pt
+
+
+# Modèles TensorFlow.js (optionnel, à garder si tu veux versionner le modèle)
+web_model/*.bin
+web_model/*.pb
+web_model/saved_model.pb
+web_model/variables/
+web_model/checkpoint
+
+# Fichiers temporaires
+*.log
+*.tmp
+*.swp
+.DS_Store
+
+# VSCode
+.vscode/

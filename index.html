@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>Reconnaissance MNIST</title>
+  <style>
+    body {
+      background: #111;
+      color: white;
+      font-family: sans-serif;
+      text-align: center;
+      margin: 2rem;
+    }
+    canvas {
+      border: 2px solid #fff;
+      background: black;
+      cursor: crosshair;
+    }
+    button {
+      margin: 1rem 0.5rem;
+      padding: 0.5rem 1.2rem;
+      font-size: 1rem;
+      cursor: pointer;
+      background-color: #222;
+      color: white;
+      border: 1px solid #fff;
+      border-radius: 5px;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background-color: #333;
+    }
+    .debug {
+      background: #222;
+      border: 1px solid #444;
+      margin: 1rem auto;
+      padding: 1rem;
+      max-width: 600px;
+      text-align: left;
+      font-family: monospace;
+      font-size: 0.9em;
+      display: none;
+    }
+    .probabilities {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      max-width: 500px;
+      margin: 1rem auto;
+    }
+    .prob-item {
+      background: #222;
+      padding: 0.5rem;
+      border-radius: 5px;
+      border: 1px solid #444;
+    }
+    .prob-bar {
+      height: 10px;
+      background: #4CAF50;
+      border-radius: 5px;
+      margin-top: 5px;
+      transition: width 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+  <h1>Dessine un chiffre (0-9)</h1>
+  <canvas id="canvas" width="280" height="280"></canvas><br>
+  <button id="predictBtn">Prédire</button>
+  <button id="clearBtn">Effacer</button>
+  <button id="debugBtn">Debug</button>
+  <h2 id="result"></h2>
+  
+  <div class="probabilities" id="probabilities"></div>
+  <div class="debug" id="debug"></div>
+
+  
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const clearBtn = document.getElementById('clearBtn');
+    const predictBtn = document.getElementById('predictBtn');
+    const debugBtn = document.getElementById('debugBtn');
+    const resultEl = document.getElementById('result');
+    const debugEl = document.getElementById('debug');
+
+    let drawing = false;
+
+    canvas.addEventListener('mousedown', () => drawing = true);
+    canvas.addEventListener('mouseup', () => {
+      drawing = false;
+      ctx.beginPath();
+    });
+    canvas.addEventListener('mouseout', () => drawing = false);
+    canvas.addEventListener('mousemove', draw);
+
+    function draw(e) {
+      if (!drawing) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      ctx.fillStyle = 'white';
+      ctx.beginPath();
+      ctx.arc(x, y, 10, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    clearBtn.addEventListener('click', () => {
+      ctx.fillStyle = 'black';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      resultEl.textContent = '';
+      document.getElementById('probabilities').innerHTML = '';
+    });
+
+    debugBtn.addEventListener('click', () => {
+      debugEl.style.display = debugEl.style.display === 'none' ? 'block' : 'none';
+    });
+
+    predictBtn.addEventListener('click', async () => {
+      const imageData = ctx.getImageData(0, 0, 280, 280);
+      const processed = downscale(imageData, 28, 28);
+      
+      
+      const normalized = processed.map(pixel => (pixel - 0.1307) / 0.3081);
+      
+      const inputTensor = new ort.Tensor('float32', Float32Array.from(normalized), [1, 1, 28, 28]);
+      
+      
+      updateDebugInfo(processed, normalized, inputTensor);
+
+      try {
+        const session = await ort.InferenceSession.create('mnist_cnn_web.onnx');
+        const feeds = { input: inputTensor };
+        const output = await session.run(feeds);
+        const outputData = output[Object.keys(output)[0]].data;
+        
+        
+        const probabilities = softmax(Array.from(outputData));
+        const predicted = probabilities.indexOf(Math.max(...probabilities));
+        const confidence = Math.max(...probabilities);
+        
+        resultEl.textContent = `Classe prédite : ${predicted} (${(confidence * 100).toFixed(1)}%)`;
+        
+        
+        
+        
+        debugEl.innerHTML += `<br><strong>Résultats:</strong><br>
+          Raw output: [${Array.from(outputData).map(x => x.toFixed(3)).join(', ')}]<br>
+          Probabilities: [${probabilities.map(x => (x * 100).toFixed(1) + '%').join(', ')}]<br>
+          Prédiction: ${predicted} avec ${(confidence * 100).toFixed(1)}% de confiance`;
+        
+      } catch (err) {
+        console.error(err);
+        resultEl.textContent = 'Erreur : ' + err.message;
+      }
+    });
+
+    function softmax(arr) {
+      const maxVal = Math.max(...arr);
+      const exp = arr.map(x => Math.exp(x - maxVal));
+      const sum = exp.reduce((a, b) => a + b, 0);
+      return exp.map(x => x / sum);
+    }
+
+
+
+    function updateDebugInfo(processed, normalized, inputTensor) {
+      debugEl.innerHTML = `
+        <strong>Debug Info:</strong><br>
+        Canvas size: 280x280 → 28x28<br>
+        Processed pixels range: [${Math.min(...processed).toFixed(3)}, ${Math.max(...processed).toFixed(3)}]<br>
+        After MNIST normalization: [${Math.min(...normalized).toFixed(3)}, ${Math.max(...normalized).toFixed(3)}]<br>
+        Normalization: (pixel - 0.1307) / 0.3081<br>
+        Input tensor shape: [${inputTensor.dims.join(', ')}]<br>
+        First 10 pixels: [${processed.slice(0, 10).map(x => x.toFixed(3)).join(', ')}]<br>
+        First 10 normalized: [${normalized.slice(0, 10).map(x => x.toFixed(3)).join(', ')}]
+      `;
+    }
+
+    function downscale(imageData, width, height) {
+      const tmpCanvas = document.createElement('canvas');
+      const tmpCtx = tmpCanvas.getContext('2d');
+
+      tmpCanvas.width = imageData.width;
+      tmpCanvas.height = imageData.height;
+      tmpCtx.putImageData(imageData, 0, 0);
+
+      const pixels = tmpCtx.getImageData(0, 0, tmpCanvas.width, tmpCanvas.height).data;
+      const binary = [];
+
+      for (let i = 0; i < pixels.length; i += 4) {
+        const avg = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+        binary.push(avg < 128 ? 1 : 0);
+      }
+
+      let [minX, minY, maxX, maxY] = [imageData.width, imageData.height, 0, 0];
+      for (let y = 0; y < imageData.height; y++) {
+        for (let x = 0; x < imageData.width; x++) {
+          if (binary[y * imageData.width + x]) {
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+
+      const boxWidth = maxX - minX + 1;
+      const boxHeight = maxY - minY + 1;
+
+      const digitCanvas = document.createElement('canvas');
+      const digitCtx = digitCanvas.getContext('2d');
+      digitCanvas.width = width;
+      digitCanvas.height = height;
+
+      const scale = Math.min(width / boxWidth, height / boxHeight);
+      const xOffset = (width - boxWidth * scale) / 2;
+      const yOffset = (height - boxHeight * scale) / 2;
+
+      digitCtx.fillStyle = 'black';
+      digitCtx.fillRect(0, 0, width, height);
+      digitCtx.drawImage(tmpCanvas,
+        minX, minY, boxWidth, boxHeight,
+        xOffset, yOffset, boxWidth * scale, boxHeight * scale
+      );
+
+      const finalData = digitCtx.getImageData(0, 0, width, height).data;
+      const grayscale = [];
+
+      for (let i = 0; i < finalData.length; i += 4) {
+        const avg = (finalData[i] + finalData[i + 1] + finalData[i + 2]) / 3;
+        // Convertir en [0,1] où 0=noir, 1=blanc (comme MNIST)
+        grayscale.push(avg / 255);
+      }
+      
+      return grayscale;
+    }
+  </script>
+</body>
+</html>
